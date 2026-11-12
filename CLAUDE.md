@@ -1,11 +1,11 @@
-# CLAUDE.md — m5-usblink
+# CLAUDE.md
 
-M5Stack（ESP32-S3）と他の機器（PC、ラズパイ、Arduino）を USB でつなぐ層の共通ライブラリ。マイコン側（`arduino/`、C++）とパソコン側（`host/`、Python）の組。使い方は `README.md`、これから足すものは `TODO.md`。
+USB communication library for M5Stack (ESP32-S3), with the device side in `arduino/` (C++) and the host side in `host/` (Python). See `README.md` for usage and `TODO.md` for planned work.
 
-## 決まり
+## Rules
 
-- **プロジェクトのことを知らない。** 持つのは通信と手順（フレーム、シリアル、キーボード、ホスト／デバイス）だけ。アプリの API の口、基板の見分けの表、何を打ち込むか、どの操作の前に断るかはアプリ側に残す。
-- **UL1 の手順と 4KB ごとの受け取り確認（ack）を崩さない。** ack が無いと、ESP32-S3 の HWCDC は黙ってデータを落とす。
-- host 側の許可リスト（既定では localhost だけ）を保つ。
-- 版は git のタグで出す。アプリは `lib_deps` に git の URL とタグを書いて固定し、同時に直す間だけ `symlink://` に差し替える。
-- 前提: CoreS3、PlatformIO espressif32@6.9.0（Arduino 2.0.17）、C++11、ArduinoJson 7。host は Python 3.11 以上、uv。
+- Keep the library generic: framing, serial, keyboard, USB host/device. Anything specific to one application, such as its API endpoints, board lookup tables, or what to type, belongs in that application.
+- Do not break the UL1 protocol or the 4 KB acks; without acks the ESP32-S3 HWCDC silently drops data.
+- Keep the host allowlist, localhost only by default.
+- Release with git tags. Applications pin the git URL and tag in `lib_deps`, and use `symlink://` only while developing against a local checkout.
+- Targets: CoreS3, PlatformIO espressif32@6.9.0 (Arduino 2.0.17), C++11, ArduinoJson 7; host on Python 3.11+ with uv.

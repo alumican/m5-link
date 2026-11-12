@@ -24,10 +24,10 @@ def test_http_is_fetched_with_body_and_headers():
         return Reply(200, b"RIFF....", "audio/wav")
 
     req = {"v": 1, "id": 3, "op": "http", "m": "POST", "u": "http://localhost:8000/api/hello",
-           "h": {"content-type": "text/plain"}, "b": base64.b64encode("いまは18度。".encode()).decode()}
+           "h": {"content-type": "text/plain"}, "b": base64.b64encode("It's 18°C.".encode()).decode()}
     msg, body = split(answer(req, ("localhost",), do_fetch=fake))
     assert msg["s"] == 200 and msg["h"]["content-type"] == "audio/wav" and body == b"RIFF...."
-    assert seen[0].method == "POST" and seen[0].body == "いまは18度。".encode()
+    assert seen[0].method == "POST" and seen[0].body == "It's 18°C.".encode()
 
 
 def test_host_not_allowed():
@@ -42,6 +42,6 @@ def test_parse_ignores_logs_and_broken_frames():
 
 
 def test_chunks_cover_the_body():
-    body = bytes(range(256)) * 40  # 10240 バイト
+    body = bytes(range(256)) * 40  # 10240 bytes
     parts = chunks(body)
     assert [len(p) for p in parts] == [4096, 4096, 2048] and b"".join(parts) == body

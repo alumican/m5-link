@@ -1,1 +1,1 @@
-"""usblink: マイコンを USB でつないで、頼まれた HTTP を代わりにする（README.md）。"""
+"""usblink: performs HTTP requests on behalf of a microcontroller connected over USB serial."""

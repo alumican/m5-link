@@ -1,39 +1,34 @@
 # TODO
 
-いまあるのは、USB シリアル越しにマイコンの HTTP をパソコンが代わりにすること（UL1）だけ。ここから下を足す。どれも通信と手順だけを持ち、何を送るか・何を打ち込むかはアプリ側に残す。
+## Features
 
-## 足すもの
+### Same API over USB and Wi-Fi
 
-### 1. 通信を USB でも Wi-Fi でも同じ形で書ける層
+- Run `UsbLink` (UL1 frames, `hello`, `http`) over either USB serial or Wi-Fi, for setups where the USB port is taken by another device
+- Keep the 4 KB acks over USB; decide whether Wi-Fi needs them
+- Apply the same host allowlist on both transports
 
-- マイコンとパソコンのやりとりを、USB シリアルでも Wi-Fi（TCP など）でも同じ API で書けるようにする。
-- USB の口をほかの機器とつなぐのに使っていて、パソコンとは Wi-Fi でしかつなげない場面がある。そのときもアプリのコードを変えずに済むようにする。
-- いまの `UsbLink`（UL1 のフレーム、`hello`、`http`）を、どちらの経路でも使えるようにするのが出発点。
-- USB のときは 4KB ごとの ack を必ず残す（HWCDC は受け取りが追いつかないと黙って捨てる）。Wi-Fi のときにも要るかは別に決める。
-- host 側の許可リスト（既定では localhost だけ）は、どちらの経路でも同じに保つ。
+### Composite USB device: serial + keyboard
 
-### 2. シリアルとキーボード（HID）の複合デバイス
+- Present the device as both CDC serial and HID keyboard, e.g. to a Raspberry Pi or a PC
+- Keep the keyboard usable regardless of the serial state
+- Keep `UsbLink` and logs working on the serial side
 
-- マイコンが USB デバイスとして、シリアル（CDC）とキーボード（HID）を同時に名乗る。相手の例はラズパイやパソコン。
-- キーボードは、シリアルの状態に関係なくいつでも使える。
-- 持つのはキーを送る手順だけ。何を打ち込むか、どの操作の前に断るかはアプリ側。
-- シリアルの側では、いまの `UsbLink` もログも、これまでどおり使える。
+### USB host
 
-### 3. USB ホスト（ほかのマイコンのシリアルを読む親機）
+- Act as a USB host and read/write the USB serial of a connected board such as an Arduino
+- Report the connected device's VID/PID
+- Decide which USB serial chips to support: CDC-ACM, CH340, CP210x, FTDI
 
-- マイコンが USB ホストになり、つないだ機器（Arduino など）の USB シリアルを読み書きする。
-- つないだ機器の VID/PID を返す。VID/PID から基板を見分ける表はアプリ側。
-- USB シリアルのチップごとの違い（CDC-ACM、CH340、CP210x、FTDI など）にどこまで対応するかを決める。
+## Open questions
 
-## 先に決めること
+- USB host needs either ESP-IDF `usb_host` directly or Arduino core 3.x; the current target is core 2.0.17 (espressif32@6.9.0)
+- `library.json` lives in `arduino/`; move it to the repository root so PlatformIO can install from the git URL, or keep requiring the `arduino/` path
+- Whether to support uploading sketches to a connected board through the USB host
 
-- **USB ホストの実現方法。** いまの前提（espressif32@6.9.0、Arduino コア 2.0.17）では USB ホストに手が届かない。ESP-IDF の usb_host を直接使うか、コアを 3.x に上げるか。コアを上げると、このライブラリを使うアプリ全部の前提が変わる。
-- **PlatformIO から git で取り込む形。** マイコン側の `library.json` が `arduino/` の下にある。ルートに置き直すか、`arduino/` を指す使い方に揃えるか。
-- **USB 越しの書き込み。** USB ホストからつないだ機器（Arduino など）にスケッチを書き込む手順を、このライブラリに入れるか。
+## Order
 
-## 順番
-
-1. git で取り込む形を決め、`v0.1.0` をアプリから git の URL とタグで取り込めるか確かめる。
-2. USB ホストの実現方法を決める。
-3. USB と Wi-Fi で同じ形にする層を設計する。
-4. シリアルとキーボードの複合デバイスを足し、次に USB ホストを足す。
+1. Settle the `library.json` location and confirm installing `v0.1.0` by git URL and tag
+2. Choose the USB host approach
+3. Design the shared USB/Wi-Fi layer
+4. Add the composite device, then USB host

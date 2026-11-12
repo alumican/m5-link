@@ -1,7 +1,7 @@
 [project]
 name = "usblink"
-version = "0.1.0"
-description = "マイコン（UsbLink）を USB でつないで、頼まれた HTTP を代わりにする。Wi-Fi のない場所で使う"
+version = "0.1.1"
+description = "Performs HTTP requests for a UsbLink microcontroller connected over USB serial, for use without Wi-Fi"
 license = "MIT"
 authors = [{ name = "Yukiya Okuda" }]
 requires-python = ">=3.11"

@@ -1,14 +1,13 @@
-"""usblink の取り決め（README.md）と、頼まれた HTTP を代わりにすること。
+"""UL1 protocol, described in README.md, and the HTTP requests made for the device.
 
-マイコンからのフレーム: 0x1E "UL1 " + JSON + "\\n"
+Device frames: 0x1E "UL1 " + JSON + "\\n"
     {"v":1,"id":1,"op":"hello"}
     {"v":1,"id":2,"op":"http","m":"GET","u":"https://...","h":{"content-type":"..."},"b":"<base64>"}
-パソコンからの返事: 0x1E "UL1 " + JSON + "\\n" のあとに本文 n バイトを c バイトずつ
-    {"v":1,"id":1,"op":"hello","s":200,"t":<UNIX 時刻>,"n":0,"c":4096}
-    {"v":1,"id":2,"op":"http","s":200,"t":<UNIX 時刻>,"n":1234,"c":4096,"h":{"content-type":"..."}}
-マイコンは c バイト受け取るごと（と最後）に {"v":1,"id":2,"op":"ack","n":<受け取った合計>} を返し、
-パソコンはそれを待ってから次を送る。ESP32-S3 の USB シリアルは、受け取りが追いつかないと黙って捨てるので
-（arduino-esp32 の HWCDC。2026-11-05、514KB の WAV が届かなかった）。
+Host replies: 0x1E "UL1 " + JSON + "\\n", followed by an n-byte body sent in c-byte chunks
+    {"v":1,"id":1,"op":"hello","s":200,"t":<UNIX time>,"n":0,"c":4096}
+    {"v":1,"id":2,"op":"http","s":200,"t":<UNIX time>,"n":1234,"c":4096,"h":{"content-type":"..."}}
+The device sends {"v":1,"id":2,"op":"ack","n":<total received>} after every c bytes and at the end, and the
+host waits for each ack, because the ESP32-S3 USB serial (arduino-esp32 HWCDC) silently drops data otherwise.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ Fetch = Callable[[Request], Reply]
 
 
 def fetch(req: Request) -> Reply:
-    """urllib で HTTP をする。つながらなければ status 0。"""
+    """Performs the request with urllib. Status is 0 if the server is unreachable."""
     r = urllib.request.Request(req.url, data=req.body or None, method=req.method, headers=req.headers)
     try:
         with urllib.request.urlopen(r, timeout=TIMEOUT) as res:
@@ -60,13 +59,13 @@ def fetch(req: Request) -> Reply:
 
 
 def frame(header: dict, body: bytes = b"") -> bytes:
-    """一行のフレーム（と、続けて送る本文）。返事の本文は chunks() で分けて送る。"""
+    """A frame line followed by its body. Reply bodies are sent with chunks() instead."""
     header = {"v": VERSION, **header, "n": len(body)}
     return PREFIX + json.dumps(header, ensure_ascii=False, separators=(",", ":")).encode() + b"\n" + body
 
 
 def reply_header(header: dict, n: int) -> bytes:
-    """返事の一行目。本文は n バイトを CHUNK ずつ送り、そのたびに ack を待つ。"""
+    """Header line of a reply whose n-byte body is sent in CHUNK-byte pieces, each awaiting an ack."""
     header = {"v": VERSION, **header, "n": n, "c": CHUNK}
     return PREFIX + json.dumps(header, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
 
@@ -76,7 +75,7 @@ def chunks(body: bytes) -> list[bytes]:
 
 
 def parse(line: bytes) -> dict | None:
-    """0x1E "UL1 " で始まる一行なら JSON を返す。壊れていれば None。"""
+    """Returns the JSON of a line starting with 0x1E "UL1 ", or None if it is not a valid frame."""
     if not line.startswith(PREFIX):
         return None
     try:
@@ -93,7 +92,7 @@ def allowed(url: str, allow: tuple[str, ...]) -> bool:
 def answer(
     msg: dict, allow: tuple[str, ...], do_fetch: Fetch = fetch, now: Callable[[], float] = time.time
 ) -> tuple[dict, bytes]:
-    """マイコンからのフレームに返すもの（返事の見出しと本文）。"""
+    """Reply (header, body) to a device frame."""
     base = {"id": msg.get("id", 0), "op": msg.get("op", ""), "t": int(now())}
     if msg.get("op") == "hello":
         return {**base, "s": 200}, b""

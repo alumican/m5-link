@@ -1,7 +1,7 @@
 {
   "name": "UsbLink",
-  "version": "0.1.0",
-  "description": "USB のシリアル越しに、つないだパソコン（usblink の host）に HTTP を頼む。Wi-Fi のない場所で使う",
+  "version": "0.1.1",
+  "description": "HTTP requests over USB serial via a connected computer running the usblink host, for use without Wi-Fi",
   "authors": [
     {
       "name": "Yukiya Okuda"

@@ -1,17 +1,15 @@
 #pragma once
-// UsbLink: USB のシリアル越しに、つないだパソコン（usblink の host）に HTTP を頼む。
-// Wi-Fi がない場所でも、パソコンがネットにつながっていれば、ネットの API を呼んだり、パソコンの上のサーバーを
-// 呼んだりできる。パソコンの時計ももらえる。ログ（Serial.print）は同じシリアルにそのまま流してよい。
+// UsbLink: HTTP requests over USB serial, made by a computer running the usblink host.
+// Reaches internet APIs and servers on the computer without Wi-Fi, and provides the computer's clock.
+// Serial.print logs can share the port: frames are single JSON lines prefixed with 0x1E "UL1 ".
+// ESP32 only, as it uses ESP-IDF mbedtls for base64. See README.md for the protocol.
 //
-// フレームは 0x1E "UL1 " で始まる一行の JSON（README.md）。ログと混ざっても見分けられる。
-// ESP32 用（ESP-IDF の mbedtls の base64 と、ArduinoJson を使う）。
-//
-//   UsbLink link;
-//   link.begin(Serial);                     // setup()。Serial.setRxBufferSize() は大きめに（4096 など）
-//   link.poll();                            // loop() で毎回
-//   int c = link.read();                    // フレームでない受け取った文字（開発用のコマンドなど）
+//   UsbLink usb;
+//   usb.begin(Serial);                   // in setup(), after enlarging the RX buffer
+//   usb.poll();                          // every loop()
+//   int c = usb.read();                  // non-frame input
 //   UsbLink::Response r;
-//   if (link.connected() && link.request("GET", "https://api.example.com/x", nullptr, 0, nullptr, r)) {
+//   if (usb.connected() && usb.request("GET", "https://api.example.com/x", nullptr, 0, nullptr, r)) {
 //     ... r.status, r.body, r.length ...
 //     free(r.body);
 //   }
@@ -21,22 +19,22 @@
 class UsbLink {
  public:
   struct Response {
-    int status = 0;           // HTTP の status。host まで届かなければ 0
-    uint8_t* body = nullptr;  // ps_malloc。使ったら free()
+    int status = 0;           // HTTP status; 0 if the host could not reach the server
+    uint8_t* body = nullptr;  // ps_malloc'd; free() when done
     size_t length = 0;
     String contentType;
   };
 
   void begin(Stream& io, uint32_t helloEveryMs = 3000);
-  // loop() から毎回呼ぶ。あいさつを送り、届いたものを読む
+  // Call every loop(). Sends hello and reads input.
   void poll();
-  // host から最近（あいさつの間隔の 3 倍以内）返事があったか
+  // True if the host replied within 3 hello intervals.
   bool connected() const;
-  // host の時計（UNIX 時刻、秒）。まだ分からなければ 0
+  // Host clock (UNIX time, seconds); 0 if unknown.
   int64_t hostTime() const;
-  // フレームでない受け取った一文字。なければ -1。poll() と request() のあいだに届いたものもためておく
+  // Next non-frame input byte, or -1. Bytes received during poll() and request() are buffered.
   int read();
-  // HTTP を頼んで、返事を待つ。返事が来れば true（status は out.status）
+  // Sends an HTTP request and waits for the reply. Returns true if a reply arrived; the HTTP status is in out.status.
   bool request(const char* method, const String& url, const uint8_t* body, size_t length, const char* contentType,
                Response& out, uint32_t timeoutMs = 20000);
 
@@ -48,14 +46,14 @@ class UsbLink {
   int64_t hostEpoch = 0;
   uint32_t hostEpochAt = 0;
   uint32_t nextId = 1;
-  // 受け取りの途中
+  // Frame being received
   String line;
   bool inFrame = false;
-  // フレームでない文字
+  // Non-frame input
   static const int CHARS = 64;
   char chars[CHARS];
   int charHead = 0, charTail = 0;
-  // request() が待っている返事
+  // Reply awaited by request()
   uint32_t waitingId = 0;
   bool gotReply = false;
   Response* reply = nullptr;

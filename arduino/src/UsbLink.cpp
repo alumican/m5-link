@@ -1,5 +1,3 @@
-// UsbLink（UsbLink.h）。
-
 #include "UsbLink.h"
 
 #include <ArduinoJson.h>
@@ -22,7 +20,7 @@ int64_t UsbLink::hostTime() const {
 
 void UsbLink::pushChar(char c) {
   int next = (charHead + 1) % CHARS;
-  if (next == charTail) return;  // あふれたら捨てる
+  if (next == charTail) return;  // drop on overflow
   chars[charHead] = c;
   charHead = next;
 }
@@ -37,7 +35,7 @@ int UsbLink::read() {
 
 void UsbLink::send(const String& json) {
   String frame = String(PREFIX) + json + "\n";
-  io->write((const uint8_t*)frame.c_str(), frame.length());  // 一度に書く（ログの途中に割り込まれないように）
+  io->write((const uint8_t*)frame.c_str(), frame.length());  // single write so logs cannot interleave
   io->flush();
 }
 
@@ -50,7 +48,7 @@ void UsbLink::poll() {
   pump();
 }
 
-// 届いているものを読む。0x1E からの一行はフレーム、ほかは文字としてためる。
+// Reads available input: a line starting with 0x1E is a frame; anything else is buffered for read().
 void UsbLink::pump() {
   while (io->available()) {
     int c = io->read();
@@ -71,13 +69,13 @@ void UsbLink::pump() {
     } else if (line.length() < MAX_LINE) {
       line += (char)c;
     } else {
-      inFrame = false;  // 長すぎる。壊れているので捨てる
+      inFrame = false;  // too long; drop as broken
     }
   }
 }
 
-// 本文を n バイト読む（buf が nullptr なら読み捨てる）。chunk バイトごとと最後に ack を返す。
-// host は ack を待ってから次を送る。ESP32-S3 の USB シリアルは、受け取りが追いつかないと黙って捨てるので。
+// Reads an n-byte body (discarded if buf is nullptr), acking every chunk bytes and at the end.
+// The host waits for each ack because the ESP32-S3 USB serial silently drops data when the reader falls behind.
 bool UsbLink::readBody(uint8_t* buf, size_t n, uint32_t id, size_t chunk, uint32_t timeoutMs) {
   uint8_t sink[256];
   size_t got = 0, acked = 0;
@@ -96,7 +94,7 @@ bool UsbLink::readBody(uint8_t* buf, size_t n, uint32_t id, size_t chunk, uint32
     if (chunk && (got - acked == chunk || got == n)) {
       acked = got;
       send(String("{\"v\":1,\"id\":") + id + ",\"op\":\"ack\",\"n\":" + (unsigned)got + "}");
-      deadline = millis() + timeoutMs;  // 次のかたまりを待つ
+      deadline = millis() + timeoutMs;  // wait for the next chunk
     }
   }
   return got == n;
@@ -114,19 +112,19 @@ void UsbLink::handleFrame(const String& json) {
   }
   const char* op = doc["op"] | "";
   if (!strcmp(op, "hello")) helloGotAt = millis();
-  // 本文（n バイト）は待っている返事のときだけ取っておき、ほかは読み捨てる
+  // Keep the body only for the awaited reply; discard others
   bool mine = waitingId && id == waitingId && reply;
   uint8_t* body = nullptr;
   if (n) {
     body = mine ? (uint8_t*)ps_malloc(n) : nullptr;
-    if (!readBody(body, n, id, chunk, 5000) && body) {  // 途中で切れた
+    if (!readBody(body, n, id, chunk, 5000) && body) {  // truncated
       free(body);
       body = nullptr;
       mine = false;
     }
   }
   if (!mine) return;
-  helloGotAt = millis();  // 返事が来たのも、つながっている証拠
+  helloGotAt = millis();  // a reply also proves the link is up
   reply->status = doc["s"] | 0;
   reply->body = body;
   reply->length = body ? n : 0;
@@ -153,7 +151,7 @@ bool UsbLink::request(const char* method, const String& url, const uint8_t* body
     if (!b64) return false;
     mbedtls_base64_encode((unsigned char*)b64, outLen + 1, &outLen, body, length);
     b64[outLen] = 0;
-    doc["b"] = (const char*)b64;  // JsonDocument にコピーされる
+    doc["b"] = (const char*)b64;  // copied into the JsonDocument
     free(b64);
   }
   String json;
