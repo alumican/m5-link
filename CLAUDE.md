@@ -4,6 +4,7 @@ USB communication library for M5Stack (ESP32-S3), with the device side in `ardui
 
 ## Rules
 
+- Write everything in this repository in English: code, comments, docs, CLI messages, commit messages, issues and pull requests.
 - Keep the library generic: framing, serial, keyboard, USB host/device. Anything specific to one application, such as its API endpoints, board lookup tables, or what to type, belongs in that application.
 - Do not break the UL1 protocol or the 4 KB acks; without acks the ESP32-S3 HWCDC silently drops data.
 - Keep the host allowlist, localhost only by default.
