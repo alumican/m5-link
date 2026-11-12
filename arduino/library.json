@@ -1,6 +1,6 @@
 {
-  "name": "UsbLink",
-  "version": "0.1.1",
+  "name": "m5-usblink",
+  "version": "0.1.2",
   "description": "HTTP requests over USB serial via a connected computer running the usblink host, for use without Wi-Fi",
   "authors": [
     {

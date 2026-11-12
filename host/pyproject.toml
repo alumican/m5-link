@@ -1,6 +1,6 @@
 [project]
-name = "usblink"
-version = "0.1.1"
+name = "m5-usblink"
+version = "0.1.2"
 description = "Performs HTTP requests for a UsbLink microcontroller connected over USB serial, for use without Wi-Fi"
 license = "MIT"
 authors = [{ name = "Yukiya Okuda" }]
