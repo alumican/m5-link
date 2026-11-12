@@ -1,0 +1,20 @@
+{
+  "name": "UsbLink",
+  "version": "0.1.0",
+  "description": "USB のシリアル越しに、つないだパソコン（usblink の host）に HTTP を頼む。Wi-Fi のない場所で使う",
+  "authors": [
+    {
+      "name": "Yukiya Okuda"
+    }
+  ],
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "dependencies": {
+    "bblanchon/ArduinoJson": "^7.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alumican/m5-usblink.git"
+  }
+}

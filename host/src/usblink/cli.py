@@ -1,0 +1,132 @@
+"""usblink: マイコン（UsbLink）を USB でつないで、頼まれた HTTP を代わりにする。ログはそのまま出す。
+
+    usblink                                   # /dev/cu.usbmodem* の最初につなぐ。localhost だけ許す
+    usblink --allow api.open-meteo.com        # 許す先を足す（何度でも）
+    usblink --port /dev/cu.usbmodem101
+
+打った文字（Enter で送る）はマイコンに送る（開発用の一文字コマンドなど）。Ctrl-C でやめる。
+ポートを開くとマイコンが一度再起動することがある（USB のシリアルのつくり）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import sys
+import threading
+import time
+
+import serial
+
+from .link import DEFAULT_ALLOW, answer, chunks, parse, reply_header
+
+
+def find_port() -> str | None:
+    return next(iter(sorted(glob.glob("/dev/cu.usbmodem*") + glob.glob("/dev/ttyACM*"))), None)
+
+
+def open_port(name: str) -> serial.Serial:
+    port = serial.Serial()
+    port.port, port.baudrate, port.timeout = name, 115200, 0.1
+    port.dtr = port.rts = False
+    port.open()
+    return port
+
+
+def log(msg: str) -> None:
+    sys.stderr.write(f"[usblink] {msg}\n")
+    sys.stderr.flush()
+
+
+class Lines:
+    """シリアルから一行ずつ。フレームでない行（ログ）はそのまま出す。"""
+
+    def __init__(self, port: serial.Serial):
+        self.port = port
+        self.buf = b""
+
+    def frame(self, timeout: float | None = None) -> dict | None:
+        """次のフレーム。timeout 秒たっても来なければ None。"""
+        deadline = None if timeout is None else time.time() + timeout
+        while True:
+            while b"\n" in self.buf:
+                line, self.buf = self.buf.split(b"\n", 1)
+                start = line.find(b"\x1e")
+                if start < 0:
+                    sys.stdout.write(line.decode("utf-8", "replace") + "\n")
+                    sys.stdout.flush()
+                    continue
+                if start > 0:  # ログの途中にフレームが入った
+                    sys.stdout.write(line[:start].decode("utf-8", "replace"))
+                msg = parse(line[start:])
+                if msg is None:
+                    log("broken frame")
+                    continue
+                return msg
+            if deadline is not None and time.time() > deadline:
+                return None
+            # 届いている分だけ読む（read(4096) だと 4096 バイトそろうか timeout まで待ち、ack ごとに 0.1 秒止まった）
+            self.buf += self.port.read(max(1, self.port.in_waiting))
+
+
+def send_reply(port: serial.Serial, lines: Lines, header: dict, body: bytes) -> bool:
+    """返事を送る。本文は CHUNK ずつ、マイコンの ack を待ちながら。"""
+    port.write(reply_header(header, len(body)))
+    sent = 0
+    for part in chunks(body):
+        port.write(part)
+        port.flush()
+        sent += len(part)
+        while True:
+            msg = lines.frame(timeout=5)
+            if msg is None:
+                log(f"no ack after {sent} bytes")
+                return False
+            if msg.get("op") == "ack" and msg.get("id") == header["id"]:
+                break
+            # ほかのフレーム（あいさつなど）には返さない。本文の途中に返事を混ぜると、マイコンが本文として読んでしまう
+    return True
+
+
+def serve(port: serial.Serial, allow: tuple[str, ...], quiet_hello: bool = True) -> None:
+    lines = Lines(port)
+    while True:
+        msg = lines.frame()
+        if msg.get("op") == "ack":
+            continue
+        t0 = time.time()
+        header, body = answer(msg, allow)
+        ok = send_reply(port, lines, header, body)
+        if msg.get("op") != "hello" or not quiet_hello:
+            took = time.time() - t0
+            log(f"{msg.get('m', '')} {msg.get('u', msg.get('op'))} -> {header.get('s')} {len(body)} bytes in {took:.2f}s"
+                + ("" if ok else " (not delivered)"))
+
+
+def keyboard(port: serial.Serial) -> None:
+    for line in sys.stdin:
+        port.write(line.rstrip("\n").encode())
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(prog="usblink", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--port", help="既定は /dev/cu.usbmodem* の最初")
+    p.add_argument("--allow", action="append", default=[], help="HTTP を代わりにしてよいホスト（localhost は最初から）")
+    p.add_argument("--show-hello", action="store_true", help="あいさつも表示する")
+    args = p.parse_args()
+
+    name = args.port or find_port()
+    if not name:
+        sys.exit("マイコンが見つからない（USB でつないで、/dev/cu.usbmodem* を確かめる）")
+    allow = tuple(DEFAULT_ALLOW) + tuple(args.allow)
+    log(f"{name}, allow: {', '.join(allow)}")
+    while True:
+        try:
+            port = open_port(name)
+            threading.Thread(target=keyboard, args=(port,), daemon=True).start()
+            serve(port, allow, quiet_hello=not args.show_hello)
+        except KeyboardInterrupt:
+            return
+        except (serial.SerialException, OSError) as e:  # マイコンが再起動すると、ポートが一度消える
+            log(f"port lost ({e}). reconnecting...")
+            time.sleep(1)
