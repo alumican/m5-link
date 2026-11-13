@@ -1,23 +1,29 @@
-"""m5-link: performs HTTP requests for a UsbLink device over USB serial, and prints its logs.
+"""m5-link: prints a device's logs and sends it typed input, over USB serial or Wi-Fi.
+Over USB it also performs HTTP requests for UsbLink.
 
     m5-link                                   # first /dev/cu.usbmodem*; allows localhost only
     m5-link --allow api.open-meteo.com        # allow another host (repeatable)
     m5-link --port /dev/cu.usbmodem101
+    m5-link --wifi myapp.local                # WifiSerial on port 2323; or HOST:PORT
 
 Typed lines are sent to the device on Enter (e.g. dev commands). Ctrl-C quits.
-Opening the port may reset the device once.
+Opening the USB port may reset the device once.
+Over Wi-Fi the password is read from M5LINK_PASSWORD, or asked for.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import glob
+import os
 import sys
 import threading
 import time
 
 import serial
 
+from . import wifi
 from .link import DEFAULT_ALLOW, answer, chunks, parse, reply_header
 
 
@@ -103,9 +109,59 @@ def serve(port: serial.Serial, allow: tuple[str, ...], quiet_hello: bool = True)
                 + ("" if ok else " (not delivered)"))
 
 
-def keyboard(port: serial.Serial) -> None:
-    for line in sys.stdin:
-        port.write(line.rstrip("\n").encode())
+class Keyboard:
+    """Sends typed lines, without the newline, to whichever connection is current; dropped while there is none."""
+
+    def __init__(self) -> None:
+        self.send = None
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        for line in sys.stdin:
+            send = self.send
+            if send is None:
+                continue
+            try:
+                send(line.rstrip("\n").encode())
+            except (OSError, serial.SerialException):
+                pass
+
+
+def run_wifi(target: str, password: str) -> None:
+    host, port = wifi.parse_target(target)
+    keys = Keyboard()
+    waiting = False
+    while True:
+        try:
+            sock, first = wifi.connect(host, port, password)
+        except wifi.AuthError:
+            sys.exit(f"{host}:{port} rejected the password (M5LINK_PASSWORD)")
+        except OSError as e:  # not on the network yet, or resetting
+            if not waiting:
+                log(f"waiting for {host}:{port} ({e})")
+                waiting = True
+            time.sleep(1)
+            continue
+        waiting = False
+        log(f"connected to {host}:{port}")
+        keys.send = sock.sendall
+        try:
+            wifi.pump(sock, first, sys.stdout)
+        except OSError:
+            pass
+        finally:
+            keys.send = None
+            sock.close()
+        log("connection lost. reconnecting...")
+
+
+def wifi_password() -> str:
+    password = os.environ.get("M5LINK_PASSWORD", "")
+    if not password and sys.stdin.isatty():
+        password = getpass.getpass("WifiSerial password: ")
+    if not password:
+        sys.exit("set M5LINK_PASSWORD to the device's WifiSerial password")
+    return password
 
 
 def main() -> None:
@@ -113,20 +169,31 @@ def main() -> None:
     p.add_argument("--port", help="serial port (default: first /dev/cu.usbmodem* or /dev/ttyACM*)")
     p.add_argument("--allow", action="append", default=[], help="host to allow HTTP requests to (localhost is always allowed)")
     p.add_argument("--show-hello", action="store_true", help="also log hello frames")
+    p.add_argument("--wifi", metavar="HOST[:PORT]", help=f"connect to WifiSerial instead of USB (port {wifi.DEFAULT_PORT} by default)")
     args = p.parse_args()
+
+    if args.wifi:
+        password = wifi_password()
+        try:
+            run_wifi(args.wifi, password)
+        except KeyboardInterrupt:
+            pass
+        return
 
     name = args.port or find_port()
     if not name:
         sys.exit("no device found (connect it over USB and check /dev/cu.usbmodem*)")
     allow = tuple(DEFAULT_ALLOW) + tuple(args.allow)
     log(f"{name}, allow: {', '.join(allow)}")
+    keys = Keyboard()
     while True:
         try:
             port = open_port(name)
-            threading.Thread(target=keyboard, args=(port,), daemon=True).start()
+            keys.send = port.write
             serve(port, allow, quiet_hello=not args.show_hello)
         except KeyboardInterrupt:
             return
         except (serial.SerialException, OSError) as e:  # the port disappears while the device resets
+            keys.send = None
             log(f"port lost ({e}). reconnecting...")
             time.sleep(1)

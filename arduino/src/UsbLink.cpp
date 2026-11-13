@@ -33,6 +33,22 @@ int UsbLink::read() {
   return (uint8_t)c;
 }
 
+int UsbLink::available() {
+  if (io) pump();
+  return (charHead - charTail + CHARS) % CHARS;
+}
+
+int UsbLink::peek() {
+  if (io) pump();
+  return charHead == charTail ? -1 : (uint8_t)chars[charTail];
+}
+
+size_t UsbLink::write(const uint8_t* data, size_t n) { return io ? io->write(data, n) : 0; }
+
+void UsbLink::flush() {
+  if (io) io->flush();
+}
+
 void UsbLink::send(const String& json) {
   String frame = String(PREFIX) + json + "\n";
   io->write((const uint8_t*)frame.c_str(), frame.length());  // single write so logs cannot interleave

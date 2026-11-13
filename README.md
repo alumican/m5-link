@@ -6,6 +6,9 @@ Available now:
 
 - `UsbLink`: HTTP requests through a computer connected over USB serial, for places where the ESP32 cannot join Wi-Fi, such as venues with 5 GHz networks only. Also provides the computer's clock. `Serial.print` logs share the same port, and the host prints them and forwards typed input, so it doubles as a serial monitor.
 - `WifiLink`: joins Wi-Fi, trying the network saved in NVS first and then fallbacks supplied by the application.
+- `WifiSerial`: a password-protected `Stream` over Wi-Fi for logs and typed input, read with `m5-link --wifi`. For when the USB port is busy with something else.
+
+`UsbLink` and `WifiSerial` are both `Stream`s with `poll()` and `connected()`, so logging and command code can take a `Stream&` and work over either.
 
 The library has no display or camera code. Screens for entering Wi-Fi credentials or pairing belong in the application or a separate library, which passes the result to `WifiLink::save()`.
 
@@ -18,13 +21,13 @@ Device, in `platformio.ini`:
 
 ```ini
 lib_deps =
-  https://github.com/alumican/m5-link.git#v0.2.0
+  https://github.com/alumican/m5-link.git#v0.3.0
 ```
 
 Host:
 
 ```sh
-uv tool install "git+https://github.com/alumican/m5-link@v0.2.0#subdirectory=host"
+uv tool install "git+https://github.com/alumican/m5-link@v0.3.0#subdirectory=host"
 ```
 
 ## UsbLink
@@ -92,6 +95,90 @@ void setup() {
 | `void disconnect()` | |
 | `bool connected() const` | |
 | `const String& ssid() const` | Network of the last successful connect |
+
+## WifiSerial
+
+```cpp
+#include "WifiLink.h"
+#include "WifiSerial.h"
+
+WifiLink wifi("myapp-wifi");
+WifiSerial con;  // TCP port 2323; WifiSerial con(port, txBufferSize) to change
+
+void setup() {
+  wifi.connect();
+  con.begin("long-random-password", "myapp");  // advertises myapp.local; Wi-Fi may connect later
+}
+
+void loop() {
+  con.poll();               // accepts the computer, sends buffered output, reads input
+  int c = con.read();       // typed input, or -1
+  if (c == 'r') con.println("reset requested");
+}
+```
+
+On the computer:
+
+```sh
+export M5LINK_PASSWORD=long-random-password   # asked for if unset
+m5-link --wifi myapp.local                     # or an IP address, HOST:PORT for another port
+```
+
+The command prints everything the device writes, sends each typed line (without the newline) on Enter, and reconnects by itself when the device resets or leaves the network. It exits if the password is wrong. `dns-sd -B _m5link._tcp` lists devices advertising WifiSerial.
+
+| Method | |
+|---|---|
+| `WifiSerial(uint16_t port = 2323, size_t txBufferSize = 4096)` | |
+| `bool begin(const char* password, const char* hostname = nullptr)` | Starts listening once Wi-Fi is connected. False if the password is empty. With a hostname, starts mDNS and advertises `_m5link._tcp` |
+| `void end()` | Closes all sockets |
+| `void poll()` | Call every `loop()` |
+| `bool connected() const` | An authenticated computer is connected |
+| `IPAddress remoteIP() const` | Its address |
+| `size_t dropped() const` | Bytes dropped because the send buffer was full |
+| `print`, `write`, `read`, `available`, `peek`, `flush` | As any `Stream`. `flush()` never waits |
+
+Using either transport:
+
+```cpp
+UsbLink usb;
+WifiSerial net;
+Stream* con = &usb;  // or &net while the USB port is in use
+
+void loop() {
+  usb.poll();
+  net.poll();
+  con->println("tick");
+  int c = con->read();
+}
+```
+
+Behavior:
+
+- Never blocks. Output is discarded while no computer is connected, queued in the send buffer while the network is slow, and dropped once the buffer is full (`dropped()` counts it). Input is buffered up to 256 bytes until read.
+- One computer at a time. A newer one that authenticates replaces the older, so a computer that went to sleep does not lock you out. TCP keepalive also notices a vanished computer within about 11 s.
+- Use it from one task, normally `loop()`.
+- With ArduinoOTA, give both the same hostname; ArduinoOTA starts mDNS too, and a second `MDNS.begin` with the same name is harmless.
+
+### Design choices
+
+- TCP, not UDP: logs and commands need every byte in order, and a connection tells the device whether anyone is listening, so it can discard output instead of sending it nowhere.
+- The device listens and the computer connects: the device does not need to know the computer's address, any computer can attach, and reconnecting is the computer's job, so the device does nothing while nobody is there.
+- mDNS: `<hostname>.local` resolves without looking up the device's IP, which DHCP may change. macOS resolves `.local` names natively; on Linux, use the IP or install nss-mdns.
+- Password with challenge-response: anyone on the same Wi-Fi can reach the port, and typed input drives the application. The device sends a random nonce, and the computer answers with HMAC-SHA256 of it keyed by the password, so the password never crosses the network and a recorded answer cannot be replayed. The device refuses connections for 1 s after a wrong answer, which slows guessing. There is no unauthenticated mode.
+- No encryption: after authentication, logs and input are plain TCP, readable by anyone who can capture the network's traffic. Do not log secrets. TLS on the device would cost tens of KB of RAM per connection.
+- Use a long random password: a captured nonce and answer allow offline guessing of short ones.
+
+### WifiSerial protocol
+
+The handshake uses the UL1 frame format; after it, bytes pass through unchanged in both directions.
+
+```
+device: 0x1E UL1 {"v":1,"op":"auth","nonce":"<32 hex digits>"}\n
+host:   0x1E UL1 {"v":1,"op":"auth","mac":"<64 hex digits: HMAC-SHA256(key=password, message=nonce as ASCII)>"}\n
+device: 0x1E UL1 {"v":1,"op":"auth","s":200}\n
+```
+
+On a wrong answer the device sends `"s":401` and closes. The host must answer within 5 s.
 
 ## UsbLink protocol v1
 

@@ -1,7 +1,7 @@
 [project]
 name = "m5-link"
-version = "0.2.0"
-description = "Host side of m5-link: performs HTTP requests for an M5Stack connected over USB serial"
+version = "0.3.0"
+description = "Host side of m5-link: logs and typed input over USB serial or Wi-Fi, and HTTP requests for an M5Stack over USB"
 license = "MIT"
 authors = [{ name = "Yukiya Okuda" }]
 requires-python = ">=3.11"

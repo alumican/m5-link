@@ -3,7 +3,7 @@
 ## Scope
 
 - USB: serial, HID keyboard, USB host and device, HTTP through the host computer
-- Wi-Fi: joining saved and fallback networks, HTTP
+- Wi-Fi: joining saved and fallback networks, HTTP, serial (`WifiSerial`)
 - BLE: HID keyboard, serial. The ESP32-S3 has BLE only, no Bluetooth Classic
 - One API each for HTTP requests, keyboard typing, and serial exchange, whichever transport carries it
 - No display or camera code, and no dependency on UI libraries
@@ -16,6 +16,12 @@
 - Let the application pick a transport or try them in order, e.g. Wi-Fi, then USB
 - Run the UL1 protocol over Wi-Fi as well as USB; keep the 4 KB acks over USB and decide whether Wi-Fi needs them
 - Apply the same host allowlist on every transport
+
+### WifiSerial
+
+- Not yet tested on a device: built for CoreS3 with espressif32@6.9.0 and the host tested against a simulated device only. Check on a CoreS3: authentication, reconnecting after a device reset and after a Wi-Fi drop, the listener surviving a Wi-Fi reconnect, mDNS alongside ArduinoOTA, and output under load (`dropped()`)
+- Decide whether to keep recent output while no computer is connected, so boot logs show up on connect
+- Discover devices from `m5-link` itself (`_m5link._tcp`) instead of naming one with `--wifi`
 
 ### Composite USB device: serial + keyboard
 
