@@ -100,7 +100,7 @@ def answer(
         return {**base, "s": 400}, b"unknown op"
     url = msg.get("u", "")
     if not allowed(url, allow):
-        return {**base, "s": 403}, f"not allowed: {urlparse(url).hostname} (usblink --allow)".encode()
+        return {**base, "s": 403}, f"not allowed: {urlparse(url).hostname} (m5-link --allow)".encode()
     req = Request(
         method=msg.get("m", "GET"),
         url=url,

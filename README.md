@@ -1,20 +1,33 @@
-# m5-usblink
+# m5-link
 
-Lets an ESP32 make HTTP requests through a computer connected over USB serial. Useful where the ESP32 cannot join Wi-Fi, such as venues with 5 GHz networks only. The device can call internet APIs or servers running on the computer, and read the computer's clock.
+Transport library for M5Stack (ESP32-S3). The goal is one way to make HTTP requests, type as a keyboard, and exchange serial data, whichever transport is available: USB, Wi-Fi, or BLE. See [TODO.md](TODO.md) for what is not built yet.
 
-The same serial port carries `Serial.print` logs. The host prints them and forwards typed input to the device, so it also works as a serial monitor.
+Available now:
 
-- `arduino/`: `UsbLink`, the device library for ESP32, using ArduinoJson and ESP-IDF mbedtls
-- `host/`: `usblink`, the host command in Python, using pyserial
+- `UsbLink`: HTTP requests through a computer connected over USB serial, for places where the ESP32 cannot join Wi-Fi, such as venues with 5 GHz networks only. Also provides the computer's clock. `Serial.print` logs share the same port, and the host prints them and forwards typed input, so it doubles as a serial monitor.
+- `WifiLink`: joins Wi-Fi, trying the network saved in NVS first and then fallbacks supplied by the application.
 
-## Usage
+The library has no display or camera code. Screens for entering Wi-Fi credentials or pairing belong in the application or a separate library, which passes the result to `WifiLink::save()`.
 
-Device, in `platformio.ini`, with this repository cloned next to your project:
+- `arduino/src/`: device library, using ArduinoJson, ESP-IDF mbedtls, and the ESP32 Arduino core
+- `host/`: `m5-link`, the host command in Python, using pyserial
+
+## Install
+
+Device, in `platformio.ini`:
 
 ```ini
 lib_deps =
-  symlink://../m5-usblink/arduino
+  https://github.com/alumican/m5-link.git#v0.2.0
 ```
+
+Host:
+
+```sh
+uv tool install "git+https://github.com/alumican/m5-link@v0.2.0#subdirectory=host"
+```
+
+## UsbLink
 
 ```cpp
 #include "UsbLink.h"
@@ -40,18 +53,47 @@ void loop() {
 }
 ```
 
-Host:
+On the computer:
 
 ```sh
-uv tool install ./m5-usblink/host
-usblink --allow api.open-meteo.com
+m5-link --allow api.open-meteo.com
 ```
 
 - The host only makes requests to `localhost` and to hosts given with `--allow`
 - `localhost` on the device refers to the computer
 - Opening the port may reset the device; the host reconnects whenever the port reappears
 
-## Protocol v1
+## WifiLink
+
+```cpp
+#include "WifiLink.h"
+
+WifiLink wifi("myapp-wifi");  // NVS namespace, up to 15 characters
+
+void setup() {
+  const WifiLink::Network spare[] = {{"backup-ssid", "backup-password"}};
+  if (wifi.connect(spare, 1)) {
+    // wifi.ssid() is the network that worked
+  }
+}
+
+// After the user enters credentials:
+//   wifi.save(ssid, password);
+//   wifi.connect();
+```
+
+| Method | |
+|---|---|
+| `bool saved(Network& out) const` | Saved network, false if none |
+| `bool save(const String& ssid, const String& password)` | Replaces the saved network; empty password for open networks |
+| `void forget()` | Erases the saved network |
+| `bool connect(const Network* fallbacks = nullptr, size_t count = 0, uint32_t timeoutMs = 10000)` | Tries the saved network, then each fallback, skipping empty and repeated SSIDs |
+| `bool connect(const Network& network, uint32_t timeoutMs = 10000)` | Joins one network |
+| `void disconnect()` | |
+| `bool connected() const` | |
+| `const String& ssid() const` | Network of the last successful connect |
+
+## UsbLink protocol v1
 
 Each frame is a single line of JSON prefixed with `0x1E` `UL1 `, which keeps it distinct from log output.
 

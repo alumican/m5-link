@@ -1,5 +1,5 @@
 #pragma once
-// UsbLink: HTTP requests over USB serial, made by a computer running the usblink host.
+// UsbLink: HTTP requests over USB serial, made by a computer running the m5-link host.
 // Reaches internet APIs and servers on the computer without Wi-Fi, and provides the computer's clock.
 // Serial.print logs can share the port: frames are single JSON lines prefixed with 0x1E "UL1 ".
 // ESP32 only, as it uses ESP-IDF mbedtls for base64. See README.md for the protocol.

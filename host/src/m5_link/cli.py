@@ -1,8 +1,8 @@
-"""usblink: performs HTTP requests for a UsbLink device over USB serial, and prints its logs.
+"""m5-link: performs HTTP requests for a UsbLink device over USB serial, and prints its logs.
 
-    usblink                                   # first /dev/cu.usbmodem*; allows localhost only
-    usblink --allow api.open-meteo.com        # allow another host (repeatable)
-    usblink --port /dev/cu.usbmodem101
+    m5-link                                   # first /dev/cu.usbmodem*; allows localhost only
+    m5-link --allow api.open-meteo.com        # allow another host (repeatable)
+    m5-link --port /dev/cu.usbmodem101
 
 Typed lines are sent to the device on Enter (e.g. dev commands). Ctrl-C quits.
 Opening the port may reset the device once.
@@ -34,7 +34,7 @@ def open_port(name: str) -> serial.Serial:
 
 
 def log(msg: str) -> None:
-    sys.stderr.write(f"[usblink] {msg}\n")
+    sys.stderr.write(f"[m5-link] {msg}\n")
     sys.stderr.flush()
 
 
@@ -109,7 +109,7 @@ def keyboard(port: serial.Serial) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(prog="usblink", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(prog="m5-link", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port", help="serial port (default: first /dev/cu.usbmodem* or /dev/ttyACM*)")
     p.add_argument("--allow", action="append", default=[], help="host to allow HTTP requests to (localhost is always allowed)")
     p.add_argument("--show-hello", action="store_true", help="also log hello frames")

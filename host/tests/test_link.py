@@ -1,7 +1,7 @@
 import base64
 import json
 
-from usblink.link import CHUNK, PREFIX, Reply, answer, chunks, frame, parse, reply_header
+from m5_link.link import CHUNK, PREFIX, Reply, answer, chunks, frame, parse, reply_header
 
 
 def split(out):
@@ -24,10 +24,10 @@ def test_http_is_fetched_with_body_and_headers():
         return Reply(200, b"RIFF....", "audio/wav")
 
     req = {"v": 1, "id": 3, "op": "http", "m": "POST", "u": "http://localhost:8000/api/hello",
-           "h": {"content-type": "text/plain"}, "b": base64.b64encode("It's 18°C.".encode()).decode()}
+           "h": {"content-type": "text/plain"}, "b": base64.b64encode("It's 18\u00b0C.".encode()).decode()}
     msg, body = split(answer(req, ("localhost",), do_fetch=fake))
     assert msg["s"] == 200 and msg["h"]["content-type"] == "audio/wav" and body == b"RIFF...."
-    assert seen[0].method == "POST" and seen[0].body == "It's 18°C.".encode()
+    assert seen[0].method == "POST" and seen[0].body == "It's 18\u00b0C.".encode()
 
 
 def test_host_not_allowed():
