@@ -6,7 +6,8 @@ Over USB it also performs HTTP requests for UsbLink.
     m5-link --port /dev/cu.usbmodem101
     m5-link --wifi myapp.local                # WifiSerial on port 2323; or HOST:PORT
 
-Typed lines are sent to the device on Enter (e.g. dev commands). Ctrl-C quits.
+Typed lines are sent to the device on Enter (e.g. dev commands); lines typed while not connected
+are sent once connected. Ctrl-C quits.
 Opening the USB port may reset the device once.
 Over Wi-Fi the password is read from M5LINK_PASSWORD, or asked for.
 """
@@ -110,21 +111,51 @@ def serve(port: serial.Serial, allow: tuple[str, ...], quiet_hello: bool = True)
 
 
 class Keyboard:
-    """Sends typed lines, without the newline, to whichever connection is current; dropped while there is none."""
+    """Sends typed lines, without the newline, to whichever connection is current.
 
-    def __init__(self) -> None:
-        self.send = None
-        threading.Thread(target=self._run, daemon=True).start()
+    Lines typed while there is none (before authentication, while the device resets) are queued and sent,
+    in order, as soon as the next connection is attached.
+    """
 
-    def _run(self) -> None:
-        for line in sys.stdin:
-            send = self.send
-            if send is None:
-                continue
-            try:
-                send(line.rstrip("\n").encode())
-            except (OSError, serial.SerialException):
-                pass
+    ERRORS = (OSError, serial.SerialException)
+
+    def __init__(self, lines=None) -> None:
+        self._send = None
+        self._queue: list[bytes] = []
+        self._lock = threading.Lock()
+        threading.Thread(target=self._run, args=(sys.stdin if lines is None else lines,), daemon=True).start()
+
+    def _run(self, lines) -> None:
+        for line in lines:
+            self.type(line)
+
+    def type(self, line: str) -> None:
+        data = line.rstrip("\n").encode()
+        with self._lock:
+            if self._send is not None:
+                try:
+                    self._send(data)
+                    return
+                except self.ERRORS:
+                    self._send = None
+            self._queue.append(data)
+        log(f"not connected; will send on connect: {data.decode(errors='replace')!r}")
+
+    def attach(self, send) -> None:
+        """Sends the queued lines, then routes new ones to send."""
+        with self._lock:
+            while self._queue:
+                try:
+                    send(self._queue[0])
+                except self.ERRORS:
+                    return  # connection already gone; keep the rest queued
+                self._queue.pop(0)
+                log("sent a queued line")
+            self._send = send
+
+    def detach(self) -> None:
+        with self._lock:
+            self._send = None
 
 
 def run_wifi(target: str, password: str) -> None:
@@ -144,13 +175,13 @@ def run_wifi(target: str, password: str) -> None:
             continue
         waiting = False
         log(f"connected to {host}:{port}")
-        keys.send = sock.sendall
+        keys.attach(sock.sendall)
         try:
             wifi.pump(sock, first, sys.stdout)
         except OSError:
             pass
         finally:
-            keys.send = None
+            keys.detach()
             sock.close()
         log("connection lost. reconnecting...")
 
@@ -189,11 +220,11 @@ def main() -> None:
     while True:
         try:
             port = open_port(name)
-            keys.send = port.write
+            keys.attach(port.write)
             serve(port, allow, quiet_hello=not args.show_hello)
         except KeyboardInterrupt:
             return
         except (serial.SerialException, OSError) as e:  # the port disappears while the device resets
-            keys.send = None
+            keys.detach()
             log(f"port lost ({e}). reconnecting...")
             time.sleep(1)

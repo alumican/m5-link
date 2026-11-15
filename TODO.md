@@ -19,7 +19,8 @@
 
 ### WifiSerial
 
-- Not yet tested on a device: built for CoreS3 with espressif32@6.9.0 and the host tested against a simulated device only. Check on a CoreS3: authentication, reconnecting after a device reset and after a Wi-Fi drop, the listener surviving a Wi-Fi reconnect, mDNS alongside ArduinoOTA, and output under load (`dropped()`)
+- Checked on a CoreS3 alongside ArduinoOTA with the same hostname: found over mDNS, authentication, logs, typed input, and reconnecting with logs continuing after an OTA upload and reboot
+- Not yet checked on a device: reconnecting after a Wi-Fi drop, the listener surviving a Wi-Fi reconnect, and output under load (`dropped()`)
 - Decide whether to keep recent output while no computer is connected, so boot logs show up on connect
 - Discover devices from `m5-link` itself (`_m5link._tcp`) instead of naming one with `--wifi`
 

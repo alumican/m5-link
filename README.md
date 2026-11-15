@@ -21,13 +21,13 @@ Device, in `platformio.ini`:
 
 ```ini
 lib_deps =
-  https://github.com/alumican/m5-link.git#v0.3.0
+  https://github.com/alumican/m5-link.git#v0.3.1
 ```
 
 Host:
 
 ```sh
-uv tool install "git+https://github.com/alumican/m5-link@v0.3.0#subdirectory=host"
+uv tool install "git+https://github.com/alumican/m5-link@v0.3.1#subdirectory=host"
 ```
 
 ## UsbLink
@@ -124,7 +124,7 @@ export M5LINK_PASSWORD=long-random-password   # asked for if unset
 m5-link --wifi myapp.local                     # or an IP address, HOST:PORT for another port
 ```
 
-The command prints everything the device writes, sends each typed line (without the newline) on Enter, and reconnects by itself when the device resets or leaves the network. It exits if the password is wrong. `dns-sd -B _m5link._tcp` lists devices advertising WifiSerial.
+The command prints everything the device writes, sends each typed line (without the newline) on Enter, and reconnects by itself when the device resets or leaves the network. Lines typed while not connected, such as before authentication finishes or while the device resets, are queued and sent in order once connected, over USB as well. It exits if the password is wrong. `dns-sd -B _m5link._tcp` lists devices advertising WifiSerial.
 
 | Method | |
 |---|---|
