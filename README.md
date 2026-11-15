@@ -7,8 +7,9 @@ Available now:
 - `UsbLink`: HTTP requests through a computer connected over USB serial, for places where the ESP32 cannot join Wi-Fi, such as venues with 5 GHz networks only. Also provides the computer's clock. `Serial.print` logs share the same port, and the host prints them and forwards typed input, so it doubles as a serial monitor.
 - `WifiLink`: joins Wi-Fi, trying the network saved in NVS first and then fallbacks supplied by the application.
 - `WifiSerial`: a password-protected `Stream` over Wi-Fi for logs and typed input, read with `m5-link --wifi`. For when the USB port is busy with something else.
+- `UsbDevice`: the device as a composite USB device, CDC serial plus HID keyboard, so a host such as a Raspberry Pi sees `/dev/ttyACM0` and a keyboard at once. The keyboard types text without blocking, in the US or Japanese layout.
 
-`UsbLink` and `WifiSerial` are both `Stream`s with `poll()` and `connected()`, so logging and command code can take a `Stream&` and work over either.
+`UsbLink` and `WifiSerial` are both `Stream`s with `poll()` and `connected()`, so logging and command code can take a `Stream&` and work over either. `UsbDevice::serial()` is a `Stream` too, and `UsbLink` can run over it.
 
 The library has no display or camera code. Screens for entering Wi-Fi credentials or pairing belong in the application or a separate library, which passes the result to `WifiLink::save()`.
 
@@ -21,13 +22,13 @@ Device, in `platformio.ini`:
 
 ```ini
 lib_deps =
-  https://github.com/alumican/m5-link.git#v0.3.1
+  https://github.com/alumican/m5-link.git#v0.4.0
 ```
 
 Host:
 
 ```sh
-uv tool install "git+https://github.com/alumican/m5-link@v0.3.1#subdirectory=host"
+uv tool install "git+https://github.com/alumican/m5-link@v0.4.0#subdirectory=host"
 ```
 
 ## UsbLink
@@ -180,6 +181,78 @@ device: 0x1E UL1 {"v":1,"op":"auth","s":200}\n
 
 On a wrong answer the device sends `"s":401` and closes. The host must answer within 5 s.
 
+## UsbDevice
+
+Serial and keyboard over the ESP32-S3's USB-OTG port, using TinyUSB. Needs these build flags:
+
+```ini
+build_flags =
+  -DARDUINO_USB_MODE=0
+  -DARDUINO_USB_CDC_ON_BOOT=0
+build_unflags =
+  -DARDUINO_USB_MODE=1
+  -DARDUINO_USB_CDC_ON_BOOT=1
+```
+
+```cpp
+#include "UsbDevice.h"
+
+UsbDevice usb;  // global: its USB interfaces must be registered before USB starts
+
+void setup() {
+  usb.begin("My Device");                 // product name shown by lsusb
+  usb.keyboard.setLayout(KeyLayout::JP);  // the layout the host uses
+  usb.keyboard.setInterval(20);           // ms per key
+}
+
+void loop() {
+  usb.poll();                             // types queued keys, one press or release per call
+  Stream& io = usb.serial();
+  if (io.available()) { /* JSON lines from the host program */ }
+  if (usb.mounted() && !usb.keyboard.busy() && startRequested) {
+    usb.keyboard.tap(KeyMod::Ctrl | KeyMod::Alt, 't');  // e.g. open a terminal
+    usb.keyboard.type("python3 ~/agent.py\n");
+  }
+  if (usb.keyboard.busy()) {
+    // show "typing" with usb.keyboard.typed() of usb.keyboard.total()
+  }
+}
+```
+
+| `UsbDevice` | |
+|---|---|
+| `bool begin(const char* productName = nullptr, const char* manufacturer = nullptr, size_t rxBufferSize = 2048)` | Starts USB |
+| `void poll()` | Call every `loop()` |
+| `bool mounted() const` | A host has configured the device and is not suspended. Unplugging shows as suspended |
+| `USBCDC& serial()` | The CDC port, a `Stream`. `bool(usb.serial())` is true while a host program has it open |
+| `UsbKeyboard keyboard` | |
+
+| `UsbKeyboard` | |
+|---|---|
+| `void setLayout(KeyLayout layout)` | `KeyLayout::US` (default) or `KeyLayout::JP` |
+| `void setInterval(uint16_t ms)` | Time per key, half held and half released; default 20 |
+| `bool type(const char* text)` | Queues text: printable ASCII, `\n` (Enter), `\t` (Tab), `\b` (Backspace), `\x1b` (Esc). Other characters, including `\r`, are skipped; false if any were |
+| `bool tap(uint8_t modifiers, char c)` | Queues one key with modifiers, e.g. `tap(KeyMod::Ctrl, 'c')` |
+| `void tapKey(uint8_t modifiers, uint8_t usage)` | Queues a key by HID usage ID: `Key::Enter`, `Key::Esc`, `Key::Up`, `Key::F1`, ... |
+| `void cancel()` | Drops keys not typed yet |
+| `bool busy() const` | Keys are queued or one is held down |
+| `size_t typed() const`, `size_t total() const`, `size_t skipped() const` | Progress of the current batch, which starts when keys are queued while not busy; kept after it finishes |
+
+Behavior:
+
+- Typing never blocks the loop: each `poll()` sends at most one key press or release, waiting up to 20 ms for the host to take it. A key therefore needs two `poll()` calls, so call it often while typing. While the host is not there, keys stay queued.
+- The device sends key positions, not characters, so the layout must match the host's. `KeyLayout::JP` is the JIS 106/109 layout, which Raspberry Pi OS uses when Japan is chosen (`jp106`); symbols such as `@ : ' " _ \ |` are on different keys from US. On a Japanese host, `\` is typed with the "ro" key, which Linux treats as backslash.
+- An input method in Japanese mode, or Caps Lock, changes what the host makes of the keys; switch to direct input first.
+- The serial port does not block while no host program has it open: writes return 0. While a program has it open but is not reading, each write waits up to 250 ms (`serial().setTxTimeoutMs()`).
+- `UsbLink` works over `usb.serial()`, with `m5-link --port /dev/ttyACM0` on the host.
+
+Things to know about `ARDUINO_USB_MODE=0`:
+
+- The ESP32-S3's USB-Serial/JTAG port is gone while the application runs, so `Serial` is the hardware UART (GPIO 43/44), not USB. Log over `WifiSerial` instead.
+- Uploading over USB with the usual reset no longer works. Use OTA, or put the CoreS3 in download mode by holding its reset button for about 2 s until the green LED lights, upload, then press reset. The core's CDC also reboots into download mode when a host opens it at 1200 baud; this has not been tried as an upload method here. `usb.serial().enableReboot(false)` turns that off.
+- With `ARDUINO_USB_CDC_ON_BOOT=1` instead, the core starts USB before `setup()`: `serial()` is `Serial`, `Serial.print` logs go to the host program, and `begin()` cannot set the names.
+- Some Linux hosts run ModemManager, which may send AT commands to a new `/dev/ttyACM*` for a few seconds after it appears. Raspberry Pi OS does not install it by default.
+
 ## UsbLink protocol v1
 
 Each frame is a single line of JSON prefixed with `0x1E` `UL1 `, which keeps it distinct from log output.
@@ -209,6 +282,12 @@ Host to device:
 ```sh
 cd host
 uv run --group dev pytest
+```
+
+Keyboard layouts, on the computer:
+
+```sh
+c++ -std=c++11 -Wall -I arduino/src arduino/test/key_layout_test.cpp arduino/src/KeyLayout.cpp -o /tmp/key_layout_test && /tmp/key_layout_test
 ```
 
 ## License

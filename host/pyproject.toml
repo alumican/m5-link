@@ -1,6 +1,6 @@
 [project]
 name = "m5-link"
-version = "0.3.1"
+version = "0.4.0"
 description = "Host side of m5-link: logs and typed input over USB serial or Wi-Fi, and HTTP requests for an M5Stack over USB"
 license = "MIT"
 authors = [{ name = "Yukiya Okuda" }]

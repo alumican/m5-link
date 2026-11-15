@@ -2,7 +2,7 @@
 
 ## Scope
 
-- USB: serial, HID keyboard, USB host and device, HTTP through the host computer
+- USB: serial, HID keyboard (`UsbDevice`), USB host, HTTP through the host computer
 - Wi-Fi: joining saved and fallback networks, HTTP, serial (`WifiSerial`)
 - BLE: HID keyboard, serial. The ESP32-S3 has BLE only, no Bluetooth Classic
 - One API each for HTTP requests, keyboard typing, and serial exchange, whichever transport carries it
@@ -26,9 +26,10 @@
 
 ### Composite USB device: serial + keyboard
 
-- Present the device as both CDC serial and HID keyboard, e.g. to a Raspberry Pi or a PC
-- Keep the keyboard usable regardless of the serial state
-- Keep `UsbLink` and logs working on the serial side
+- `UsbDevice` built for CoreS3 with espressif32@6.9.0 (`ARDUINO_USB_MODE=0`, with `ARDUINO_USB_CDC_ON_BOOT` 0 and 1). Layout tables tested on a computer only
+- Not yet checked on a device: enumeration on a Raspberry Pi as `/dev/ttyACM0` plus a keyboard, typing in the US and JP layouts, `mounted()` when unplugged and replugged (no VBUS sensing, so it relies on suspend), CDC JSON lines alongside typing, `UsbLink` over `serial()`, and the 1200-baud reboot as an upload method
+- Keyboard LED state (Caps Lock) for the application
+- Share `KeyLayout` with a BLE keyboard
 
 ### BLE
 
