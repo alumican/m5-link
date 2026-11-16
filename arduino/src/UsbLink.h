@@ -60,6 +60,7 @@ class UsbLink : public Stream {
   // Frame being received
   String line;
   bool inFrame = false;
+  bool frameTooLong = false;  // rest of the line is skipped up to its newline
   // Non-frame input
   static const int CHARS = 64;
   char chars[CHARS];

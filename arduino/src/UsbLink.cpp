@@ -72,6 +72,7 @@ void UsbLink::pump() {
     if (!inFrame) {
       if (c == 0x1E) {
         inFrame = true;
+        frameTooLong = false;
         line = "";
       } else {
         pushChar((char)c);
@@ -80,12 +81,15 @@ void UsbLink::pump() {
     }
     if (c == '\n') {
       inFrame = false;
-      if (line.startsWith("UL1 ")) handleFrame(line.substring(4));
+      if (!frameTooLong && line.startsWith("UL1 ")) handleFrame(line.substring(4));
       line = "";
+    } else if (frameTooLong) {
+      // too long: dropped as broken, up to its newline so the rest does not reach read()
     } else if (line.length() < MAX_LINE) {
       line += (char)c;
     } else {
-      inFrame = false;  // too long; drop as broken
+      frameTooLong = true;
+      line = "";
     }
   }
 }

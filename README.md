@@ -22,13 +22,13 @@ Device, in `platformio.ini`:
 
 ```ini
 lib_deps =
-  https://github.com/alumican/m5-link.git#v0.4.0
+  https://github.com/alumican/m5-link.git#v0.4.1
 ```
 
 Host:
 
 ```sh
-uv tool install "git+https://github.com/alumican/m5-link@v0.4.0#subdirectory=host"
+uv tool install "git+https://github.com/alumican/m5-link@v0.4.1#subdirectory=host"
 ```
 
 ## UsbLink
@@ -279,9 +279,19 @@ Host to device:
 
 ## Tests
 
+Host: the UL1 replies and chunked acks over a fake serial port, the allowlist, HTTP requests against a local server, and WifiSerial authentication against a fake device.
+
 ```sh
 cd host
 uv run --group dev pytest
+```
+
+`tests`: Unity tests that run on a connected CoreS3. They cover `UsbLink` over an in-memory `Stream` that plays the host: hello and the connection state, logs kept apart from frames, requests, and acks every 4096 bytes.
+
+```sh
+cd tests
+pio test                                        # build, upload and run
+pio test --without-uploading --without-testing  # build only
 ```
 
 Keyboard layouts, on the computer:

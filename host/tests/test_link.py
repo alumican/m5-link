@@ -1,7 +1,21 @@
 import base64
-import json
+import http.server
+import socket
+import threading
 
-from m5_link.link import CHUNK, PREFIX, Reply, answer, chunks, frame, parse, reply_header
+from m5_link.link import (
+    CHUNK,
+    PREFIX,
+    Reply,
+    Request,
+    allowed,
+    answer,
+    chunks,
+    fetch,
+    frame,
+    parse,
+    reply_header,
+)
 
 
 def split(out):
@@ -45,3 +59,74 @@ def test_chunks_cover_the_body():
     body = bytes(range(256)) * 40  # 10240 bytes
     parts = chunks(body)
     assert [len(p) for p in parts] == [4096, 4096, 2048] and b"".join(parts) == body
+
+
+def test_unknown_op():
+    msg, body = split(answer({"v": 1, "id": 5, "op": "dance"}, ("localhost",)))
+    assert msg["s"] == 400 and msg["op"] == "dance"
+
+
+def test_allowlist_matches_the_host_only():
+    allow = ("localhost", "api.open-meteo.com")
+    assert allowed("http://localhost:8000/api", allow)
+    assert allowed("https://api.open-meteo.com/v1/forecast?x=1", allow)
+    assert allowed("http://LOCALHOST/", allow)
+    assert not allowed("http://localhost.example.com/", allow)
+    assert not allowed("http://example.com/localhost", allow)
+    assert not allowed("http://localhost@example.com/", allow)  # userinfo, not the host
+    assert not allowed("http://open-meteo.com/", allow)
+    assert not allowed("not a url", allow)
+
+
+class Server:
+    """A local HTTP server answering /ok, /echo (POST), and anything else with 404."""
+
+    def __init__(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def _send(self, status, body, content_type):
+                self.send_response(status)
+                self.send_header("content-type", content_type)
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/ok":
+                    self._send(200, b"fine", "text/plain")
+                else:
+                    self._send(404, b"missing", "text/plain")
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["content-length"]))
+                self._send(201, body, self.headers["content-type"])
+
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_port}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def test_fetch_returns_status_body_and_content_type():
+    server = Server()
+    try:
+        assert fetch(Request("GET", server.url + "/ok")) == Reply(200, b"fine", "text/plain")
+        assert fetch(Request("GET", server.url + "/nope")) == Reply(404, b"missing", "text/plain")
+        rep = fetch(Request("POST", server.url + "/echo", {"content-type": "application/json"}, b'{"a":1}'))
+        assert rep == Reply(201, b'{"a":1}', "application/json")
+    finally:
+        server.close()
+
+
+def test_fetch_unreachable_is_status_0():
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()  # nothing listens on this port now
+    rep = fetch(Request("GET", f"http://127.0.0.1:{port}/"))
+    assert rep.status == 0 and rep.content_type == "text/plain" and rep.body

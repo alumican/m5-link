@@ -90,3 +90,27 @@ def test_not_a_device():
     with pytest.raises(ConnectionError):
         wifi.connect("127.0.0.1", server.getsockname()[1], "pw")
     server.close()
+
+
+class Chunks:
+    """A socket whose recv() returns the given pieces, then b"" (closed)."""
+
+    def __init__(self, *pieces: bytes):
+        self.pieces = list(pieces)
+
+    def recv(self, n: int) -> bytes:
+        return self.pieces.pop(0) if self.pieces else b""
+
+
+def test_pump_joins_utf8_split_across_reads():
+    text = "18°C 晴れ\n".encode()
+    deg = text.index("°".encode())
+    out = io.StringIO()
+    wifi.pump(Chunks(text[: deg + 1], text[deg + 1 : deg + 6], text[deg + 6 :]), text[:0], out)
+    assert out.getvalue() == "18°C 晴れ\n"
+
+
+def test_pump_replaces_invalid_bytes():
+    out = io.StringIO()
+    wifi.pump(Chunks(b"ok\xff\n"), b"", out)
+    assert out.getvalue() == "ok�\n"
