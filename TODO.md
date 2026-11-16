@@ -17,6 +17,10 @@
 - Run the UL1 protocol over Wi-Fi as well as USB; keep the 4 KB acks over USB and decide whether Wi-Fi needs them
 - Apply the same host allowlist on every transport
 
+### UsbLink
+
+- Unity tests in `tests/` pass on a CoreS3 (v0.4.1): `UsbLink` over an in-memory `Stream` playing the host, including acks every 4096 bytes and overlong frames. The USB serial between the device and `m5-link` is not part of them
+
 ### WifiSerial
 
 - Checked on a CoreS3 alongside ArduinoOTA with the same hostname: found over mDNS, authentication, logs, typed input, and reconnecting with logs continuing after an OTA upload and reboot
