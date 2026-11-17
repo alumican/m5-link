@@ -24,13 +24,13 @@ Device, in `platformio.ini`:
 
 ```ini
 lib_deps =
-  https://github.com/alumican/m5-link.git#v0.5.0
+  https://github.com/alumican/m5-link.git#v0.6.0
 ```
 
 Host:
 
 ```sh
-uv tool install "git+https://github.com/alumican/m5-link@v0.5.0#subdirectory=host"
+uv tool install "git+https://github.com/alumican/m5-link@v0.6.0#subdirectory=host"
 ```
 
 ## UsbLink
@@ -306,6 +306,11 @@ void loop() {
 | `const Device& device() const` | `vid`, `pid`, `deviceClass`, `manufacturer`, `product`, `serialNumber`, `cdcAcm`; empty while none |
 | `void onAttach(std::function<void(const Device&)>)`, `void onDetach(...)` | Called from `poll()`. A detach is reported before an attach that follows it |
 | `UsbHostSerial& serial()` | |
+| `Port port() const`, `bool connected() const` | The port as the controller sees it, enumerated or not: `connected` (something pulls D+ or D- up), `enabled`, `speed` (`UsbSpeed::Low`, `Full`, ...), `dPlus`, `dMinus` (line levels) |
+| `void onConnect(std::function<void(UsbSpeed)>)`, `void onDisconnect(std::function<void()>)` | Called from `poll()` when something is plugged in or unplugged, before any enumeration |
+| `void onEnumerationFailed(std::function<void(const EnumerationFailure&)>)` | Called from `poll()`, once per connection, when a connected device does not attach |
+| `bool enumerationFailed() const`, `const EnumerationFailure& failure() const` | The failure for the current connection: `speed`, `stage` (e.g. `GET_FULL_CONFIG_DESC`), `message` (the library's error lines), `timedOut`. Cleared on unplug |
+| `void setEnumerationTimeout(uint32_t ms)` | How long a connected device may take to attach before it counts as failed; default 5000 |
 
 | `UsbHostSerial` | |
 |---|---|
@@ -322,8 +327,23 @@ Order and power:
 3. `poll()` every `loop()`. A device plugged in before or after `begin()` is reported by `poll()`.
 
 - Turn the 5 V output on only while the port is a host with a device attached. Never when it is plugged into a computer or a Raspberry Pi, which supply 5 V themselves: start `UsbDevice` with the output off.
+- On a CoreS3, the 5 V output setting lives in the power chips (AW9523, AXP2101), not the ESP32, so it survives a restart. With it still on, a computer on a USB-C port sees 5 V already there and does not act as a host, so `UsbDevice` never mounts. Turn it off early in `setup()` (`M5.Power.setUsbOutput(false)`), wait about a second for the line to settle, and only then decide the role, e.g. by checking for outside power.
 - While it is a host, the CoreS3 cannot be charged through the port; it runs on its battery or other supply, which also powers the attached device (an Uno R3 draws about 50 mA).
 - With DTR on, which is the default, an Arduino Uno resets when it attaches, as when a computer opens its port, and its bootloader runs for up to about a second before the sketch starts. Turning DTR off and on again resets it again, which is how a later sketch upload (STK500) would start.
+
+What can be known about a plugged-in device:
+
+| What happens | What the application sees |
+|---|---|
+| The device enumerates | `onConnect`, then `onAttach` with its identity; `attached()` |
+| It pulls D+ or D- up but enumeration fails | `onConnect` with its speed, then `onEnumerationFailed` with the stage that failed and the library's error lines |
+| It pulls a line up but nothing is logged and it never attaches | `onConnect`, then `onEnumerationFailed` with `timedOut` after the timeout |
+| No data lines (charge-only cable), or the device never pulls a line up (it only takes power, is off or asleep, or waits for something the port does not offer) | Nothing: `connected()` stays false, the same as an empty port. The USB controller cannot see power draw |
+
+- ESP-IDF 4.4 does not tell clients about failed enumerations, but its hub driver logs them as errors, e.g. `Stage failed: GET_FULL_CONFIG_DESC`. `begin()` installs an `esp_log_set_vprintf()` hook that copies the USB Host Library's error lines and passes all output on unchanged. Without them, for example when the application installs its own hook after `begin()` or lowers the log level below errors, failures are reported only by the timeout, with an empty `stage`.
+- After a failed enumeration, the library does not retry until the device is unplugged and plugged in again.
+- A high-speed device runs at full speed here: the ESP32-S3 host is full speed only.
+- Limits of ESP-IDF 4.4 that make some devices fail: a configuration descriptor longer than 256 bytes (`CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` in the core's prebuilt SDK) fails with "Configuration descriptor larger than control transfer max length"; only the first configuration is used; one device and no hubs.
 
 Using `UsbDevice` and `UsbHost` in one firmware:
 

@@ -1,6 +1,6 @@
 {
   "name": "m5-link",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Transport library for M5Stack (ESP32-S3): HTTP over USB serial through a host computer, Wi-Fi connection with saved credentials, a serial Stream over Wi-Fi, a composite USB device with CDC serial and HID keyboard, and a USB host for CDC-ACM serial devices",
   "keywords": "m5stack, esp32, usb, serial, wifi, ble",
   "authors": [

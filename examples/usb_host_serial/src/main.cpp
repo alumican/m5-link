@@ -21,6 +21,15 @@ WifiLink wifi("usbhost-ex");
 WifiSerial console;
 UsbHost usb;
 
+static const char* speedName(UsbSpeed s) {
+  switch (s) {
+    case UsbSpeed::Low: return "low speed";
+    case UsbSpeed::Full: return "full speed";
+    case UsbSpeed::High: return "high speed";
+    default: return "unknown speed";
+  }
+}
+
 static void show(const char* what, const UsbHost::Device& d) {
   console.printf("%s %04x:%04x \"%s\" \"%s\" serial \"%s\"%s\n", what, d.vid, d.pid, d.manufacturer.c_str(),
                  d.product.c_str(), d.serialNumber.c_str(), d.cdcAcm ? ", CDC-ACM" : "");
@@ -37,11 +46,19 @@ void setup() {
   ArduinoOTA.setHostname(NAME);
   ArduinoOTA.begin();
 
-  // Power the port first, then start the host. Only do this when the port is not plugged into a computer.
+  // Power the port first, then start the host. Only do this when the port is not plugged into a computer:
+  // the output stays on across a restart, so a real application turns it off at boot and checks first.
   M5.Power.setUsbOutput(true);
   usb.serial().setBaud(115200);
   usb.onAttach([](const UsbHost::Device& d) { show("attached", d); });
   usb.onDetach([](const UsbHost::Device& d) { show("detached", d); });
+  usb.onConnect([](UsbSpeed s) { console.printf("something connected, %s\n", speedName(s)); });
+  usb.onDisconnect([]() { console.println("unplugged"); });
+  usb.onEnumerationFailed([](const UsbHost::EnumerationFailure& f) {
+    console.printf("connected but did not enumerate (%s): stage \"%s\"%s, %s\n", speedName(f.speed), f.stage.c_str(),
+                   f.timedOut ? ", timed out" : "", f.message.c_str());
+    M5.Display.printf("no enumeration: %s\n", f.timedOut ? "timeout" : f.stage.c_str());
+  });
   if (!usb.begin()) M5.Display.println("UsbHost failed to start");
 }
 

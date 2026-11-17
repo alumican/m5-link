@@ -49,6 +49,8 @@
 - Uploading sketches to an attached Arduino (STK500 over `UsbHostSerial`)
 - Data bits, parity and stop bits other than 8N1; serial state notifications
 - A device that never returns its transfers after unplugging keeps the next one from opening
+- Not yet checked on a device: `port()`, `onConnect`/`onDisconnect`, and `onEnumerationFailed` with the stage taken from the library's log, e.g. with an iPod, which was reported as never attaching
+- Configuration descriptors over 256 bytes cannot be read with the prebuilt ESP-IDF 4.4; would need a rebuilt SDK or core 3.x
 
 ## Open questions
 

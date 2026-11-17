@@ -4,6 +4,9 @@
 #if CONFIG_USB_OTG_SUPPORTED
 
 #include <esp_intr_alloc.h>
+#include <esp_log.h>
+#include <soc/usb_struct.h>
+#include <stdarg.h>
 
 // CDC-ACM (USB CDC PSTN subclass) values
 static const uint8_t CLASS_CDC = 0x02, SUBCLASS_ACM = 0x02, CLASS_CDC_DATA = 0x0A;
@@ -14,6 +17,43 @@ static const size_t IN_SIZE = 512;   // a multiple of the packet size, which is 
 static const size_t OUT_SIZE = 512;
 static const uint32_t RETRY_MS = 100;
 static const uint32_t FLUSH_TIMEOUT_MS = 1000;
+
+// ---- Errors from the USB Host Library
+// ESP-IDF 4.4's hub driver logs why an enumeration failed (e.g. "Stage failed: GET_FULL_CONFIG_DESC") but tells
+// clients nothing, so its error lines are copied from the log output, which still goes where it went before.
+
+static const char LOG_PREFIX[] = "E (%u) %s: ";  // ESP_LOGE's format without log colours, as in Arduino core 2.0.17
+static const int LOG_LINES = 4;
+static const int LOG_LEN = 96;
+static const size_t MESSAGE_MAX = 320;
+static portMUX_TYPE logLock = portMUX_INITIALIZER_UNLOCKED;
+static char logLines[LOG_LINES][LOG_LEN];
+static uint32_t logCount = 0;  // lines captured since boot
+static vprintf_like_t previousVprintf = nullptr;
+
+static bool usbTag(const char* tag) {
+  return tag && (!strcmp(tag, "HUB") || !strcmp(tag, "USBH") || !strcmp(tag, "HCD DWC") || !strcmp(tag, "USB HOST"));
+}
+
+static int captureLog(const char* fmt, va_list args) {
+  if (fmt && !strncmp(fmt, LOG_PREFIX, sizeof LOG_PREFIX - 1)) {
+    va_list copy;
+    va_copy(copy, args);
+    (void)va_arg(copy, unsigned);  // timestamp
+    const char* tag = va_arg(copy, const char*);
+    if (usbTag(tag)) {
+      char line[LOG_LEN];
+      vsnprintf(line, sizeof line, fmt + sizeof LOG_PREFIX - 1, copy);
+      line[strcspn(line, "\r\n")] = 0;
+      portENTER_CRITICAL(&logLock);
+      memcpy(logLines[logCount % LOG_LINES], line, LOG_LEN);
+      logCount++;
+      portEXIT_CRITICAL(&logLock);
+    }
+    va_end(copy);
+  }
+  return previousVprintf ? previousVprintf(fmt, args) : vprintf(fmt, args);  // null only while begin() installs the hook
+}
 
 // ---- Ring buffer
 
@@ -250,6 +290,7 @@ bool UsbHost::begin() {
   return false;  // TinyUSB took the port before setup()
 #else
   if (!claimUsbRole(UsbRole::Host)) return false;
+  if (!previousVprintf) previousVprintf = esp_log_set_vprintf(captureLog);
   cdc.rx.buf = (uint8_t*)malloc(rxSize);
   cdc.tx.buf = (uint8_t*)malloc(txSize);
   if (!cdc.rx.buf || !cdc.tx.buf) return false;
@@ -300,16 +341,85 @@ void UsbHost::pump() {
   }
 }
 
+UsbHost::Port UsbHost::port() const {
+  Port p;
+  if (!begun) return p;
+  uint32_t hprt = USB0.hprt;  // DWC OTG host port register; reading it has no side effects
+  p.connected = hprt & (1u << 0);
+  p.enabled = hprt & (1u << 2);
+  p.dPlus = hprt & (1u << 10);
+  p.dMinus = hprt & (1u << 11);
+  if (p.connected) {
+    static const UsbSpeed SPEEDS[] = {UsbSpeed::High, UsbSpeed::Full, UsbSpeed::Low, UsbSpeed::Unknown};
+    p.speed = SPEEDS[(hprt >> 17) & 3];
+  }
+  return p;
+}
+
 void UsbHost::poll() {
   pump();
+  if (!begun) return;
+  Port p = port();
+  bool connectedNow = p.connected || dev;  // an attached device counts even if the register blinks
+  if (connectedNow && !wasConnected) {
+    wasConnected = true;
+    connectedAt = millis();
+    if (connectCallback) connectCallback(p.speed);
+  }
   if (detachEvent) {
     detachEvent = false;
     if (detachCallback) detachCallback(goneInfo);
   }
   if (attachEvent) {
     attachEvent = false;
+    failed = false;
     if (attachCallback) attachCallback(info);
   }
+  if (!connectedNow && wasConnected) {
+    wasConnected = false;
+    failed = false;
+    lastFailure = EnumerationFailure();
+    portENTER_CRITICAL(&logLock);
+    logSeen = logCount;  // errors from here on belong to the next connection
+    portEXIT_CRITICAL(&logLock);
+    if (disconnectCallback) disconnectCallback();
+  }
+  if (wasConnected && !dev && !failed) watchPort();
+  if (failedEvent) {
+    failedEvent = false;
+    if (failedCallback) failedCallback(lastFailure);
+  }
+}
+
+// A connected device that is not attached: collects the library's error lines and decides whether it failed.
+void UsbHost::watchPort() {
+  char lines[LOG_LINES][LOG_LEN];
+  portENTER_CRITICAL(&logLock);
+  uint32_t count = logCount;
+  memcpy(lines, logLines, sizeof lines);
+  portEXIT_CRITICAL(&logLock);
+  if (count - logSeen > (uint32_t)LOG_LINES) logSeen = count - LOG_LINES;  // older lines were overwritten
+  bool definite = false;
+  for (; logSeen != count; logSeen++) {
+    const char* line = lines[logSeen % LOG_LINES];
+    if (lastFailure.message.length() + strlen(line) < MESSAGE_MAX) {
+      if (lastFailure.message.length()) lastFailure.message += "; ";
+      lastFailure.message += line;
+    }
+    static const char STAGE[] = "Stage failed: ";
+    if (!strncmp(line, STAGE, sizeof STAGE - 1)) {
+      lastFailure.stage = line + sizeof STAGE - 1;
+      definite = true;
+    } else if (strstr(line, "reset failed")) {
+      definite = true;
+    }
+  }
+  bool late = millis() - connectedAt >= enumTimeout;
+  if (!definite && !late) return;
+  lastFailure.speed = port().speed;
+  lastFailure.timedOut = !definite;
+  failed = true;
+  failedEvent = true;
 }
 
 static String ascii(const usb_str_desc_t* desc) {

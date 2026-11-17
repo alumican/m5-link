@@ -26,6 +26,8 @@
 
 class UsbHost;
 
+enum class UsbSpeed : uint8_t { Unknown, Low, Full, High };
+
 // The CDC-ACM serial port of the attached device. Never blocks, except flush().
 class UsbHostSerial : public Stream {
  public:
@@ -106,6 +108,22 @@ class UsbHost {
     bool cdcAcm = false;  // has a CDC-ACM serial interface, usable through serial()
   };
 
+  // The port as the controller sees it, whether or not the device has enumerated.
+  struct Port {
+    bool connected = false;  // something pulls D+ or D- up: a USB device is on the wire
+    bool enabled = false;    // the port has been reset and enabled for traffic
+    UsbSpeed speed = UsbSpeed::Unknown;  // detected from the pull-up; meaningful while connected
+    bool dPlus = false, dMinus = false;  // current line levels
+  };
+
+  // A device that is connected but did not become attached().
+  struct EnumerationFailure {
+    UsbSpeed speed = UsbSpeed::Unknown;
+    String stage;    // the USB Host Library's enumeration stage that failed, e.g. "GET_FULL_CONFIG_DESC"; may be empty
+    String message;  // the library's error lines for this connection, separated by "; "; may be empty
+    bool timedOut = false;  // no error was seen, but the device was still not attached after the timeout
+  };
+
   explicit UsbHost(size_t rxBufferSize = 2048, size_t txBufferSize = 1024);
 
   // Starts the USB Host Library on the USB-OTG port. Returns false if UsbDevice has the port, if TinyUSB was
@@ -118,10 +136,24 @@ class UsbHost {
   // The attached device; empty while none.
   const Device& device() const { return info; }
   UsbHostSerial& serial() { return cdc; }
+
+  // Read from the controller now; all false before begin().
+  Port port() const;
+  bool connected() const { return port().connected; }
+  // The failure for the current connection, if any. Cleared when the device is unplugged.
+  bool enumerationFailed() const { return failed; }
+  const EnumerationFailure& failure() const { return lastFailure; }
+  // How long a connected device may take to attach before it counts as failed. Default 5000 ms.
+  void setEnumerationTimeout(uint32_t ms) { enumTimeout = ms; }
   // Called from poll() with the device that attached or detached. A detach is reported before an attach that
   // follows it.
   void onAttach(std::function<void(const Device&)> callback) { attachCallback = callback; }
   void onDetach(std::function<void(const Device&)> callback) { detachCallback = callback; }
+  // Called from poll() when something is plugged in or unplugged, before or without enumeration.
+  void onConnect(std::function<void(UsbSpeed)> callback) { connectCallback = callback; }
+  void onDisconnect(std::function<void()> callback) { disconnectCallback = callback; }
+  // Called from poll() once per connection when a connected device fails to attach.
+  void onEnumerationFailed(std::function<void(const EnumerationFailure&)> callback) { failedCallback = callback; }
 
  private:
   friend class UsbHostSerial;
@@ -139,6 +171,18 @@ class UsbHost {
   uint8_t newAddress = 0;
   bool devGone = false;
   std::function<void(const Device&)> attachCallback, detachCallback;
+  std::function<void(UsbSpeed)> connectCallback;
+  std::function<void()> disconnectCallback;
+  std::function<void(const EnumerationFailure&)> failedCallback;
+  // Connection watch
+  bool wasConnected = false;
+  uint32_t connectedAt = 0;
+  uint32_t enumTimeout = 5000;
+  bool failed = false, failedEvent = false;
+  EnumerationFailure lastFailure;
+  uint32_t logSeen = 0;  // library error lines already taken
+
+  void watchPort();
 
   void pump();
   void open(uint8_t address);
