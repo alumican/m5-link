@@ -15,6 +15,7 @@
 #include <Arduino.h>
 
 #include "KeyLayout.h"
+#include "UsbRole.h"
 
 #if CONFIG_TINYUSB_ENABLED && defined(ARDUINO_USB_MODE) && !ARDUINO_USB_MODE
 
@@ -78,6 +79,7 @@ class UsbDevice {
 
   // Starts USB. productName and manufacturer are shown by the host (lsusb); they cannot be changed with
   // ARDUINO_USB_CDC_ON_BOOT=1, since USB is then started before setup(). rxBufferSize applies to the serial.
+  // Returns false if UsbHost has already started.
   bool begin(const char* productName = nullptr, const char* manufacturer = nullptr, size_t rxBufferSize = 2048);
   // Call every loop(). Types queued keys.
   void poll() { keyboard.poll(); }

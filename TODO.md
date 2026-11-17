@@ -2,7 +2,7 @@
 
 ## Scope
 
-- USB: serial, HID keyboard (`UsbDevice`), USB host, HTTP through the host computer
+- USB: serial, HID keyboard (`UsbDevice`), USB host (`UsbHost`), HTTP through the host computer
 - Wi-Fi: joining saved and fallback networks, HTTP, serial (`WifiSerial`)
 - BLE: HID keyboard, serial. The ESP32-S3 has BLE only, no Bluetooth Classic
 - One API each for HTTP requests, keyboard typing, and serial exchange, whichever transport carries it
@@ -43,19 +43,20 @@
 
 ### USB host
 
-- Act as a USB host and read/write the USB serial of a connected board such as an Arduino
-- Report the connected device's VID/PID
-- Decide which USB serial chips to support: CDC-ACM, CH340, CP210x, FTDI
+- `UsbHost` built for CoreS3 with espressif32@6.9.0, alone and in one firmware with `UsbDevice`, using ESP-IDF 4.4 `usb_host` and its own CDC-ACM driver. Example in `examples/usb_host_serial`
+- Not yet checked on a device: `usb_host` getting the USB-OTG port when `UsbDevice` is linked but not started, attaching an Arduino Uno R3 (2341:0043) and reading its strings, baud rate and DTR reset, data both ways, unplugging and replugging, and a device plugged in before `begin()`
+- USB serial chips besides CDC-ACM: CH340, CP210x, FTDI
+- Uploading sketches to an attached Arduino (STK500 over `UsbHostSerial`)
+- Data bits, parity and stop bits other than 8N1; serial state notifications
+- A device that never returns its transfers after unplugging keeps the next one from opening
 
 ## Open questions
 
-- USB host needs either ESP-IDF `usb_host` directly or Arduino core 3.x; the current target is core 2.0.17 (espressif32@6.9.0)
 - Whether to support uploading sketches to a connected board through the USB host
 - Whether `WifiLink` should keep more than one saved network
 
 ## Order
 
 1. Design the transport-independent API
-2. Choose the USB host approach
-3. Add the composite USB device and BLE keyboard and serial
-4. Add USB host
+2. Add BLE keyboard and serial
+3. Extend USB host: more serial chips, sketch uploads

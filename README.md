@@ -8,12 +8,14 @@ Available now:
 - `WifiLink`: joins Wi-Fi, trying the network saved in NVS first and then fallbacks supplied by the application.
 - `WifiSerial`: a password-protected `Stream` over Wi-Fi for logs and typed input, read with `m5-link --wifi`. For when the USB port is busy with something else.
 - `UsbDevice`: the device as a composite USB device, CDC serial plus HID keyboard, so a host such as a Raspberry Pi sees `/dev/ttyACM0` and a keyboard at once. The keyboard types text without blocking, in the US or Japanese layout.
+- `UsbHost`: the device as a USB host. Reads the attached device's identity and talks to CDC-ACM serial devices, such as an Arduino Uno R3, with baud rate, DTR and RTS. One firmware can contain both `UsbDevice` and `UsbHost` and start one of them at boot.
 
-`UsbLink` and `WifiSerial` are both `Stream`s with `poll()` and `connected()`, so logging and command code can take a `Stream&` and work over either. `UsbDevice::serial()` is a `Stream` too, and `UsbLink` can run over it.
+`UsbLink` and `WifiSerial` are both `Stream`s with `poll()` and `connected()`, so logging and command code can take a `Stream&` and work over either. `UsbDevice::serial()` and `UsbHost::serial()` are `Stream`s too.
 
 The library has no display or camera code. Screens for entering Wi-Fi credentials or pairing belong in the application or a separate library, which passes the result to `WifiLink::save()`.
 
-- `arduino/src/`: device library, using ArduinoJson, ESP-IDF mbedtls, and the ESP32 Arduino core
+- `arduino/src/`: device library, using ArduinoJson, ESP-IDF mbedtls and USB Host Library, and the ESP32 Arduino core
+- `examples/`: PlatformIO projects using the library
 - `host/`: `m5-link`, the host command in Python, using pyserial
 
 ## Install
@@ -22,13 +24,13 @@ Device, in `platformio.ini`:
 
 ```ini
 lib_deps =
-  https://github.com/alumican/m5-link.git#v0.4.1
+  https://github.com/alumican/m5-link.git#v0.5.0
 ```
 
 Host:
 
 ```sh
-uv tool install "git+https://github.com/alumican/m5-link@v0.4.1#subdirectory=host"
+uv tool install "git+https://github.com/alumican/m5-link@v0.5.0#subdirectory=host"
 ```
 
 ## UsbLink
@@ -252,6 +254,85 @@ Things to know about `ARDUINO_USB_MODE=0`:
 - Uploading over USB with the usual reset no longer works. Use OTA, or put the CoreS3 in download mode by holding its reset button for about 2 s until the green LED lights, upload, then press reset. The core's CDC also reboots into download mode when a host opens it at 1200 baud; this has not been tried as an upload method here. `usb.serial().enableReboot(false)` turns that off.
 - With `ARDUINO_USB_CDC_ON_BOOT=1` instead, the core starts USB before `setup()`: `serial()` is `Serial`, `Serial.print` logs go to the host program, and `begin()` cannot set the names.
 - Some Linux hosts run ModemManager, which may send AT commands to a new `/dev/ttyACM*` for a few seconds after it appears. Raspberry Pi OS does not install it by default.
+
+## UsbHost
+
+The USB-OTG port as a USB host, using ESP-IDF's USB Host Library (`usb_host`, ESP-IDF 4.4 in Arduino core 2.0.17). CDC-ACM is implemented in this library, as ESP-IDF 4.4 does not include a CDC-ACM host driver. Build flags, the same as for `UsbDevice`:
+
+```ini
+build_flags =
+  -DARDUINO_USB_MODE=0
+  -DARDUINO_USB_CDC_ON_BOOT=0
+build_unflags =
+  -DARDUINO_USB_MODE=1
+  -DARDUINO_USB_CDC_ON_BOOT=1
+```
+
+```cpp
+#include <M5Unified.h>
+#include "UsbHost.h"
+
+UsbHost usb;
+
+void setup() {
+  M5.begin();
+  M5.Power.setUsbOutput(true);           // 5 V on the port: the attached device is powered from here
+  usb.serial().setBaud(115200);
+  usb.onAttach([](const UsbHost::Device& d) {
+    // d.vid, d.pid, d.manufacturer, d.product, d.serialNumber, d.cdcAcm
+  });
+  usb.onDetach([](const UsbHost::Device& d) {});
+  usb.begin();
+}
+
+void loop() {
+  usb.poll();
+  UsbHostSerial& port = usb.serial();
+  if (port) {                            // a CDC-ACM device is ready
+    port.println("hello");
+    while (port.available()) handle(port.read());
+  }
+}
+```
+
+[examples/usb_host_serial](examples/usb_host_serial) bridges the attached device to `m5-link --wifi`, with OTA for updates.
+
+| `UsbHost` | |
+|---|---|
+| `UsbHost(size_t rxBufferSize = 2048, size_t txBufferSize = 1024)` | |
+| `bool begin()` | Starts the host. False if `UsbDevice` has started, if TinyUSB was started at boot (`ARDUINO_USB_CDC_ON_BOOT=1`), or if ESP-IDF fails |
+| `void poll()` | Call every `loop()`. Attach, detach, and serial data happen here |
+| `bool attached() const` | A device is attached and its descriptors have been read |
+| `const Device& device() const` | `vid`, `pid`, `deviceClass`, `manufacturer`, `product`, `serialNumber`, `cdcAcm`; empty while none |
+| `void onAttach(std::function<void(const Device&)>)`, `void onDetach(...)` | Called from `poll()`. A detach is reported before an attach that follows it |
+| `UsbHostSerial& serial()` | |
+
+| `UsbHostSerial` | |
+|---|---|
+| `explicit operator bool() const` | A CDC-ACM device is attached and ready |
+| `void setBaud(uint32_t)`, `void setDtr(bool)`, `void setRts(bool)` | Sent now if a device is ready, and on every attach. Default 115200 baud, 8N1, DTR and RTS on |
+| `read`, `available`, `peek` | As any `Stream`. Input arriving faster than it is read is dropped beyond the receive buffer (`dropped()`) |
+| `write`, `print`, `availableForWrite` | Queues output and returns the bytes queued: 0 while no device is ready, fewer than asked when the buffer is full |
+| `void flush()` | Waits until queued output is sent, the device detaches, or 1 s passes. The only call that waits |
+
+Order and power:
+
+1. `M5.begin()`, then `M5.Power.setUsbOutput(true)` to put 5 V on the port. The library does not control power.
+2. Optionally `serial().setBaud()`, `setDtr()`, `onAttach()`; then `begin()`.
+3. `poll()` every `loop()`. A device plugged in before or after `begin()` is reported by `poll()`.
+
+- Turn the 5 V output on only while the port is a host with a device attached. Never when it is plugged into a computer or a Raspberry Pi, which supply 5 V themselves: start `UsbDevice` with the output off.
+- While it is a host, the CoreS3 cannot be charged through the port; it runs on its battery or other supply, which also powers the attached device (an Uno R3 draws about 50 mA).
+- With DTR on, which is the default, an Arduino Uno resets when it attaches, as when a computer opens its port, and its bootloader runs for up to about a second before the sketch starts. Turning DTR off and on again resets it again, which is how a later sketch upload (STK500) would start.
+
+Using `UsbDevice` and `UsbHost` in one firmware:
+
+- With `ARDUINO_USB_MODE=0` and `ARDUINO_USB_CDC_ON_BOOT=0`, the Arduino core starts TinyUSB only in `USB.begin()`, which `UsbDevice::begin()` calls. Declaring a `UsbDevice` registers its USB descriptors and nothing else, so while `UsbDevice::begin()` is not called, `UsbHost::begin()` gets the USB-OTG port. This was read from the core's source and built; it has not yet been tried on a device.
+- `begin()` of one fails once the other has started. Switching roles needs a restart.
+- With `ARDUINO_USB_CDC_ON_BOOT=1`, TinyUSB starts before `setup()` and `UsbHost::begin()` returns false.
+- `UsbHost` also builds with the default `ARDUINO_USB_MODE=1`, but starting it takes the USB PHY from the USB-Serial/JTAG port that `Serial` and uploads use; this has not been tried.
+
+Limits: CDC-ACM only (no CH340, CP210x, FTDI yet); 8N1 only; one device and no hubs; serial state notifications are ignored. Uploads over USB need download mode or OTA, as with `UsbDevice`.
 
 ## UsbLink protocol v1
 

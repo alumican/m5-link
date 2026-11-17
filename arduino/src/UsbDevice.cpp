@@ -85,6 +85,7 @@ void UsbKeyboard::poll() {
 }
 
 bool UsbDevice::begin(const char* productName, const char* manufacturer, size_t rxBufferSize) {
+  if (!claimUsbRole(UsbRole::Device)) return false;  // UsbHost has the port
   if (productName) USB.productName(productName);
   if (manufacturer) USB.manufacturerName(manufacturer);
   keyboard.begin();
